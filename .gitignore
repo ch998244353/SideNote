@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+
+build/
+dist/
+*.spec
+
+*.exe
+*.lnk
+
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
