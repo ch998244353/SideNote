@@ -17,6 +17,7 @@ python -m PyInstaller `
     --onefile `
     --windowed `
     --name "SideNote" `
+    --icon "$(Join-Path $assetsDir 'sidenote-icon.ico')" `
     --distpath $distDir `
     --workpath $workDir `
     --specpath $projectRoot `
