@@ -1,3 +1,4 @@
+import ctypes
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import struct
@@ -28,6 +29,32 @@ class SideNotePatchTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = patch._load_original_module()
         patch._apply_patches(cls.app)
+
+    def create_note_window(self, root, text=""):
+        side_note_app = SimpleNamespace(
+            root=root,
+            state={"settings": {"note_font_size": 14, "show_note_lines": True}},
+            collapse_note=lambda *_args: None,
+            delete_note=lambda *_args: None,
+            open_settings=lambda *_args, **_kwargs: None,
+        )
+        model = {
+            "id": "test-note",
+            "title": "",
+            "text": text,
+            "docked": False,
+            "x": 10,
+            "y": 10,
+            "width": 360,
+            "height": 300,
+            "dock_side": "right",
+            "dock_slot": 0,
+            "collapsed_free": False,
+            "tab_x": 10,
+            "tab_y": 10,
+            "tab_edge": None,
+        }
+        return self.app.NoteWindow(side_note_app, model)
 
     def test_empty_title_stays_empty_in_state_and_display(self):
         raw = self.app.default_state()
@@ -111,6 +138,54 @@ class SideNotePatchTests(unittest.TestCase):
         )
         self.assertEqual(saved, [True, True])
 
+    def test_batch_commit_fills_current_line_and_enter_adds_one_newline(self):
+        root = self.app.tk.Tk()
+        root.withdraw()
+        note = None
+        prefix = "prefix "
+        committed = "zheshiyicichangduanwenbenshurufayicixingtijiao"
+
+        try:
+            note = self.create_note_window(root)
+            note.window.geometry("360x300+0+0")
+            note.window.attributes("-alpha", 0.0)
+            note.window.deiconify()
+            root.update()
+            self.assertEqual(note.text.cget("wrap"), "char")
+
+            def first_display_line(mode):
+                note.text.configure(wrap=mode)
+                note.text.delete("1.0", "end")
+                note.text.insert("end", prefix)
+                note.text.insert("end", committed)
+                root.update()
+                return note.text.get("1.0", "1.0 display lineend")
+
+            word_line = first_display_line("word")
+            char_line = first_display_line("char")
+
+            self.assertEqual(word_line, prefix.rstrip())
+            self.assertGreater(len(char_line), len(prefix))
+            self.assertEqual(note.model["text"], prefix + committed)
+            self.assertNotIn("\n", note.model["text"])
+
+            note.app.state["settings"]["note_font_size"] = 16
+            note.apply_theme()
+            self.assertEqual(note.text.cget("wrap"), "char")
+
+            note.text.mark_set("insert", "end-1c")
+            note.text.focus_force()
+            root.update()
+            note.text.event_generate("<Return>")
+            root.update()
+
+            self.assertEqual(note.text.get("1.0", "end-1c"), prefix + committed + "\n")
+            self.assertEqual(note.model["text"], prefix + committed + "\n")
+        finally:
+            if note:
+                note.destroy()
+            root.destroy()
+
     def test_line_setting_is_persisted_and_redraws_notes(self):
         scheduled = []
         saved = []
@@ -154,6 +229,64 @@ class SideNotePatchTests(unittest.TestCase):
 
         self.assertEqual(applied, [(True, icon)])
         self.assertIs(root._sidenote_icon, icon)
+
+    def test_free_note_and_docked_tab_are_topmost_toolwindows(self):
+        state = self.app.default_state()
+        state["settings"]["start_with_windows"] = False
+        state["notes"] = [
+            {
+                "id": "docked-note",
+                "title": "",
+                "text": "",
+                "docked": True,
+                "x": 100,
+                "y": 100,
+                "width": 360,
+                "height": 300,
+                "dock_side": "right",
+                "dock_slot": 0,
+                "collapsed_free": False,
+                "tab_x": 100,
+                "tab_y": 100,
+                "tab_edge": "right",
+            }
+        ]
+        store = SimpleNamespace(
+            load=lambda: state,
+            save=lambda _state: None,
+            recovered_from=None,
+            can_save=True,
+        )
+        root = self.app.tk.Tk()
+        root.withdraw()
+        app = None
+        note = None
+
+        try:
+            app = self.app.SideNoteApp(root, store)
+            note = self.create_note_window(root)
+            note.window.deiconify()
+            root.update()
+
+            windows = [note.window, app.tabs["docked-note"]["win"]]
+            get_style = ctypes.windll.user32.GetWindowLongW
+            for window in windows:
+                with self.subTest(window=window):
+                    child = window.winfo_id()
+                    hwnd = ctypes.windll.user32.GetParent(child) or child
+                    style = get_style(hwnd, -20) & 0xFFFFFFFF
+                    self.assertEqual(window.attributes("-toolwindow"), 1)
+                    self.assertEqual(window.attributes("-topmost"), 1)
+                    self.assertTrue(style & 0x00000080)
+                    self.assertTrue(style & 0x00000008)
+                    self.assertFalse(style & 0x00040000)
+        finally:
+            if note:
+                note.destroy()
+            if app:
+                app.exit_app()
+            else:
+                root.destroy()
 
     def test_entry_visual_changes_without_replacing_original_bindings(self):
         class Canvas:

@@ -45,6 +45,14 @@ def _hide_rule_widgets(widgets) -> None:
         widget.place_forget()
 
 
+def _configure_note_window(window) -> None:
+    try:
+        window.attributes("-toolwindow", True)
+        window.attributes("-topmost", True)
+    except tk.TclError:
+        pass
+
+
 def _set_window_icon(root) -> None:
     try:
         icon = tk.PhotoImage(file=str(_resource_path(_APP_ICON)))
@@ -94,12 +102,14 @@ def _load_original_module() -> types.ModuleType:
 def _apply_patches(module: types.ModuleType) -> None:
     original_default_state = module.default_state
     original_normalize_state = module.normalize_state
+    original_note_init = module.NoteWindow.__init__
     original_redraw_rules = module.NoteWindow._redraw_rules
     original_build_settings_ui = module.SideNoteApp._build_settings_ui
     original_app_init = module.SideNoteApp.__init__
     original_apply_theme = module.SideNoteApp._apply_theme
     original_draw_entry_icon = module.SideNoteApp._draw_entry_icon
     original_show_panel = module.SideNoteApp.show_panel
+    original_create_tab = module.SideNoteApp._create_tab
 
     def default_state() -> dict:
         state = original_default_state()
@@ -129,6 +139,11 @@ def _apply_patches(module: types.ModuleType) -> None:
                 if isinstance(title, str) and not _clean_title(title):
                     target["title"] = ""
         return state
+
+    def note_init(self, app, model: dict) -> None:
+        original_note_init(self, app, model)
+        self.text.configure(wrap="char")
+        _configure_note_window(self.window)
 
     def note_display_title(model: dict, limit: int = 16) -> str:
         title = _clean_title(model.get("title", ""))
@@ -224,10 +239,14 @@ def _apply_patches(module: types.ModuleType) -> None:
         for window in windows:
             try:
                 if window and window.winfo_viewable():
-                    window.attributes("-topmost", True)
+                    _configure_note_window(window)
                     window.lift()
             except module.tk.TclError:
                 pass
+
+    def create_tab(self, model: dict) -> None:
+        original_create_tab(self, model)
+        _configure_note_window(self.tabs[model["id"]]["win"])
 
     def create_note(
         self, x: int | None = None, y: int | None = None, title: str = ""
@@ -328,6 +347,7 @@ def _apply_patches(module: types.ModuleType) -> None:
     module.normalize_state = normalize_state
     module.note_display_title = note_display_title
     module.SideNoteApp.__init__ = app_init
+    module.NoteWindow.__init__ = note_init
     module.NoteWindow.flush = flush
     module.NoteWindow._title_focus_out = title_focus_out
     module.NoteWindow._redraw_rules = redraw_rules
@@ -335,6 +355,7 @@ def _apply_patches(module: types.ModuleType) -> None:
     module.SideNoteApp._animate_entry_background = animate_entry_background
     module.SideNoteApp._apply_theme = apply_theme
     module.SideNoteApp.show_panel = show_panel
+    module.SideNoteApp._create_tab = create_tab
     module.SideNoteApp.create_note = create_note
     module.SideNoteApp._set_note_lines = set_note_lines
     module.SideNoteApp._build_settings_ui = build_settings_ui
